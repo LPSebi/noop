@@ -55,15 +55,17 @@ jobs:
           archive
 
       - name: Package .app into .ipa (Payload structure)
+        env:
+          SCHEME: ${{ inputs.scheme }}
         run: |
           set -euo pipefail
-          ARCHIVE="$RUNNER_TEMP/NOOPiOS.xcarchive"
+          ARCHIVE="$RUNNER_TEMP/${SCHEME}.xcarchive"
           PAYLOAD_DIR="$RUNNER_TEMP/Payload"
           OUT_DIR="$RUNNER_TEMP/out"
 
           mkdir -p "$PAYLOAD_DIR" "$OUT_DIR"
 
-          APP_PATH=$(find "$ARCHIVE/Products/Applications" -maxdepth 1 -name "*.app" | head -n 1)
+          APP_PATH="$(find "$ARCHIVE/Products/Applications" -maxdepth 1 -name "*.app" -print -quit)"
           if [[ -z "$APP_PATH" ]]; then
             echo "::error::Could not find .app in archive Products/Applications"
             find "$ARCHIVE" -maxdepth 4
