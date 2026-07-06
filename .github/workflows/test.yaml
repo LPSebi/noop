@@ -1,0 +1,47 @@
+# Inspect-only workflow: lists available Xcode installations on the macOS runner
+# and verifies xcode-select can switch between them. Does NOT build the app.
+#
+# Purpose: figure out which Xcode/SDK versions are available on macos-15 (or
+# whichever runner is used) so app-build.yml can pin the right one for APIs
+# like glassEffect (iOS 26+ / Xcode 26+ SDK only).
+name: Xcode inspect
+
+on:
+  workflow_dispatch:
+
+jobs:
+  inspect:
+    runs-on: macos-15
+    steps:
+      - name: List installed Xcode apps
+        run: ls -la /Applications | grep -i xcode
+
+      - name: Show full paths and versions
+        run: |
+          for app in /Applications/Xcode*.app; do
+            echo "== $app =="
+            "$app/Contents/Developer/usr/bin/xcodebuild" -version || echo "  (could not query version)"
+            echo
+          done
+
+      - name: Show current default (xcode-select -p)
+        run: xcode-select -p
+
+      - name: Show default xcodebuild -version
+        run: xcodebuild -version
+
+      - name: Show default -showsdks (iOS + macOS)
+        run: xcodebuild -showsdks
+
+      - name: Try selecting each Xcode and print SDK list
+        run: |
+          for app in /Applications/Xcode*.app; do
+            echo "== Selecting $app =="
+            sudo xcode-select -s "$app/Contents/Developer"
+            xcode-select -p
+            xcodebuild -showsdks | grep -i ios || true
+            echo
+          done
+
+      - name: Reset to default Xcode
+        run: sudo xcode-select -s /Applications/Xcode.app/Contents/Developer || true
