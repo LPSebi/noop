@@ -1,0 +1,86 @@
+# Builds an UNSIGNED .ipa for the iOS app, intended for sideloading tools
+# (AltStore, SideStore, Sideloadly, etc.) which perform their own signing
+# with the user's Apple ID at install time.
+#
+# This is manually triggered only (workflow_dispatch) — it is not part of the
+# regular compile-gate CI and produces a downloadable artifact, unlike
+# app-build.yml which intentionally uploads nothing.
+name: Build sideload IPA
+
+on:
+  workflow_dispatch:
+    inputs:
+      scheme:
+        description: 'Xcode scheme to build'
+        required: true
+        default: 'NOOPiOS'
+
+jobs:
+  build-ipa:
+    runs-on: macos-15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Runner default is Xcode 16.4 (iOS 18.5 SDK). Pin to Xcode 26.x for
+      # newer SwiftUI APIs (e.g. glassEffect / Liquid Glass).
+      - name: Select Xcode 26
+        run: |
+          XCODE_APP="/Applications/Xcode_26.3.app"
+          if [[ ! -d "$XCODE_APP" ]]; then
+            echo "::error::Expected $XCODE_APP to exist. Installed Xcode apps in /Applications:"
+            ls -la /Applications | grep -i xcode || true
+            exit 1
+          fi
+          sudo xcode-select -s "$XCODE_APP/Contents/Developer"
+
+      - name: Show selected Xcode version
+        run: xcodebuild -version
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Archive (unsigned, device)
+        run: >-
+          xcodebuild -scheme '${{ github.event.inputs.scheme }}' -configuration Release
+          -destination 'generic/platform=iOS'
+          -archivePath "$RUNNER_TEMP/NOOPiOS.xcarchive"
+          CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO
+          AD_HOC_CODE_SIGNING_ALLOWED=YES
+          archive
+
+      - name: Package .app into .ipa (Payload structure)
+        run: |
+          set -euo pipefail
+          ARCHIVE="$RUNNER_TEMP/NOOPiOS.xcarchive"
+          PAYLOAD_DIR="$RUNNER_TEMP/Payload"
+          OUT_DIR="$RUNNER_TEMP/out"
+
+          mkdir -p "$PAYLOAD_DIR" "$OUT_DIR"
+
+          APP_PATH=$(find "$ARCHIVE/Products/Applications" -maxdepth 1 -name "*.app" | head -n 1)
+          if [[ -z "$APP_PATH" ]]; then
+            echo "::error::Could not find .app in archive Products/Applications"
+            find "$ARCHIVE" -maxdepth 4
+            exit 1
+          fi
+          echo "Found app: $APP_PATH"
+
+          cp -R "$APP_PATH" "$PAYLOAD_DIR/"
+
+          IPA_NAME="$(basename "$APP_PATH" .app).ipa"
+          cd "$RUNNER_TEMP"
+          zip -r -y "$OUT_DIR/$IPA_NAME" "Payload" > /dev/null
+
+          echo "IPA_PATH=$OUT_DIR/$IPA_NAME" >> "$GITHUB_ENV"
+          echo "Built: $OUT_DIR/$IPA_NAME"
+
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sideload-ipa
+          path: ${{ env.IPA_PATH }}
+          retention-days: 7
