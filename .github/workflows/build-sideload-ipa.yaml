@@ -44,10 +44,12 @@ jobs:
         run: xcodegen generate
 
       - name: Archive (unsigned, device)
+        env:
+          SCHEME: ${{ inputs.scheme }}
         run: >-
-          xcodebuild -scheme '${{ github.event.inputs.scheme }}' -configuration Release
+          xcodebuild -scheme "$SCHEME" -configuration Release
           -destination 'generic/platform=iOS'
-          -archivePath "$RUNNER_TEMP/NOOPiOS.xcarchive"
+          -archivePath "$RUNNER_TEMP/${SCHEME}.xcarchive"
           CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO
           AD_HOC_CODE_SIGNING_ALLOWED=YES
           archive
