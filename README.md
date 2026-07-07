@@ -14,7 +14,7 @@
   <img alt="Account free" src="https://img.shields.io/badge/account-free-C8902F?style=flat-square">
   <img alt="WHOOP 4 and 5" src="https://img.shields.io/badge/works%20with-WHOOP%204.0%20%26%205.0-6B737B?style=flat-square">
   <a href="LICENSE"><img alt="License: PolyForm Noncommercial 1.0.0" src="https://img.shields.io/badge/license-PolyForm%20Noncommercial%201.0.0-6B737B?style=flat-square"></a>
-  <a href="https://www.reddit.com/r/NOOPApp/"><img alt="Community: r/NOOPApp" src="https://img.shields.io/badge/community-r%2FNOOPApp-E8B84B?style=flat-square&logo=reddit&logoColor=white"></a>
+  <a href="https://www.reddit.com/r/NoopBand/"><img alt="Community: r/NOOPApp" src="https://img.shields.io/badge/community-r%2FNOOPApp-E8B84B?style=flat-square&logo=reddit&logoColor=white"></a>
   <a href="https://discord.com/invite/wKgyqVdjrP"><img alt="Chat: Discord" src="https://img.shields.io/badge/chat-Discord-5865F2?style=flat-square&logo=discord&logoColor=white"></a>
 </p>
 
@@ -27,7 +27,7 @@
   <a href="#download">⬇&nbsp;Download</a> ·
   <a href="https://github.com/ryanbr/noop/wiki/FAQ">❓&nbsp;FAQ</a> ·
   <a href="https://discord.com/invite/wKgyqVdjrP">💬&nbsp;Discord</a> ·
-  <a href="https://www.reddit.com/r/NOOPApp/">👽&nbsp;Reddit</a> ·
+  <a href="https://www.reddit.com/r/NoopBand/">👽&nbsp;Reddit</a> ·
   <a href="#features">Features</a> ·
   <a href="docs/PROTOCOL.md">Protocol</a> ·
   <a href="mailto:thenoopapp@gmail.com">Contact</a>
