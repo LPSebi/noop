@@ -25,7 +25,7 @@ object AppChangelog {
      * Bump this when you add a release below. The "What's New" sheet shows automatically when the
      * stored last-seen version is behind this. (Decoupled from the bundle version on purpose.)
      */
-    const val CURRENT_VERSION = "8.3.4"
+    const val CURRENT_VERSION = "8.4.0"
 
     data class Release(
         val version: String,
@@ -36,6 +36,18 @@ object AppChangelog {
 
     /** Newest first. */
     val releases: List<Release> = listOf(
+        Release(
+            version = "8.4.0",
+            title = "Faster, and fewer sharp edges",
+            date = "July 2026",
+            items = listOf(
+                "**NOOP runs natively on Intel Macs again.** The macOS build is a true universal binary, so it launches and runs at full speed on both Apple-silicon and Intel Macs.",
+                "**Back up on iPhone without fighting the folder picker.** Backup & Sync now offers *Use NOOP's own folder* — a one-tap backup saved inside NOOP and visible in the Files app, for when iOS won't let you pick a folder.",
+                "**The Settings screen fits your screen again.** A control that could push Settings off the edge (most visibly in German, or at larger text sizes) is fixed.",
+                "**Snappier sleep and recovery analysis.** The nightly re-score reads your data in far fewer database round-trips, and the app carries lighter scene art.",
+                "**Your phone backup alarm no longer depends on wrist alerts.** If you set a smart alarm, the backup notification is scheduled even if you never turned wrist alerts on — and NOOP now warns you when a strap keeps refusing the alarm time.",
+            ),
+        ),
         Release(
             version = "8.3.4",
             title = "Clearer sync status",
@@ -1406,7 +1418,7 @@ object AppChangelog {
             items = listOf(
                 "Fixed (Mac): the download was accidentally an Apple-Silicon-only build, so it could not launch on Intel Macs at all. It now ships as a true universal binary that runs natively on both Intel and Apple Silicon. Thanks @stnnnts (#177, #165).",
                 "Fixed (iPhone): importing a WHOOP export or Apple Health .zip on a sideloaded build - the file picker was greying out the .zip so nothing could be selected. iOS now offers only the file types it can actually open, so the .zip is selectable again. Thanks @adrnxq (#179).",
-                "New (iPhone): an AltStore / SideStore source for one-tap updates on sideloaded installs - add https://raw.githubusercontent.com/NoopApp/noop/main/altstore-source.json as a source in AltStore or SideStore. Reimplemented from @RazvanRex (#178).",
+                "New (iPhone): an AltStore / SideStore source for one-tap updates on sideloaded installs - add https://raw.githubusercontent.com/ryanbr/noop/main/altstore-source.json as a source in AltStore or SideStore. Reimplemented from @RazvanRex (#178).",
             ),
         ),
         Release(

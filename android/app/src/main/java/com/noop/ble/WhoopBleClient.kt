@@ -201,7 +201,8 @@ data class LiveState(
     /** Blank all live biometric readouts (HR + R-R + the rolling buffer) so a stale heart rate or R-R
      *  strip can't outlive the link. Applied on disconnect alongside the charging/bond clears. Twin of
      *  macOS LiveState.clearBiometrics (PR#191). */
-    fun clearedBiometrics(): LiveState = copy(heartRate = null, rr = emptyList(), rrRecent = emptyList())
+    fun clearedBiometrics(): LiveState = copy(heartRate = null, rr = emptyList(), rrRecent = emptyList(),
+                                              streamingLiveHR = false)   // #56: a dropped link is no longer streaming
 }
 
 /**
@@ -1027,7 +1028,13 @@ class WhoopBleClient(
     fun publishExternalLiveHr(hr: Int, rr: List<Int>) {
         if (rr.isNotEmpty()) _state.update { it.withRRIntervals(rr) }
         if (hr in 30..220) {
-            _state.update { it.copy(heartRate = hr, connected = true) }
+            // #56: a non-WHOOP source (the Oura ring, an FTMS machine, a generic HR strap) is actively
+            // streaming live HR. Set streamingLiveHR so the Live console reads it as a trusted stream
+            // instead of "connecting / not trusted" — this seam is invoked ONLY when WHOOP's own BLE is
+            // paused, so it never sets the flag for a WHOOP. `bonded` stays false (no encrypted bond), so
+            // the buzz/alarm/HRV feature gates keep keying off the WHOOP bond. Twin of iOS OuraLiveSource
+            // → LiveState.streamingLiveHR (PR #56).
+            _state.update { it.copy(heartRate = hr, connected = true, streamingLiveHR = true) }
         }
     }
 
@@ -1437,7 +1444,9 @@ class WhoopBleClient(
     private val collectorLock = Any()
 
     /** Buffered complete custom-channel frames awaiting a batched decode+insert. */
-    private val liveBuffer = ArrayList<ByteArray>()
+    // #47: buffer the (raw frame, pre-parsed) pair. Raw bytes stay for the raw path; the parse is the one
+    // the dispatcher already did, so flushLive doesn't re-decode the batch.
+    private val liveBuffer = ArrayList<Pair<ByteArray, com.noop.protocol.ParsedFrame>>()
     private var batchStartedAtMs = System.currentTimeMillis()
 
     /** Standard 0x2A37 HR/RR buffer — the reliable, always-on stream (port of Collector.stdHR/stdRR). */
@@ -1716,7 +1725,7 @@ class WhoopBleClient(
             // teardownAfterGattFailure → handleDisconnect already publishes connected=false; make the
             // "off" reason explicit for the UI so it reads "Bluetooth is off" rather than "Reconnecting…".
             _state.update { it.copy(
-                connected = false, scanning = false,
+                connected = false, scanning = false, streamingLiveHR = false,   // #56: keep streamingLiveHR ⟹ connected
                 statusNote = "Bluetooth is off. Turn it on to reconnect.",
             ) }
         }
@@ -1784,6 +1793,7 @@ class WhoopBleClient(
         disconnect()
         lastDevice = null   // don't auto-reconnect to the old strap; the next connect scans for the new model
         _state.update { it.copy(connected = false, bonded = false, encryptedBond = false,
+                                streamingLiveHR = false,   // #56: a device switch drops any external stream too
                                 r22FlagsAccepted = 0, deepPacketsThisSession = 0) }   // #174 reset per session
     }
 
@@ -3252,10 +3262,14 @@ class WhoopBleClient(
                     // every offloaded frame for nothing. (The Swift 5/MG inbound loop already hoists this.)
                     val offloadFrame = backfilling && isOffloadFrame(frame, connectedFamily)
                     noteWhoop5R22Telemetry(frame, offloadFrame)  // #174
+                    // #47: decode this frame ONCE and thread it to both consumers (the router below and the
+                    // live collector) instead of each re-parsing it — steady-state drops 2→1 parse per live
+                    // frame. Family-aware, so it's correct for WHOOP4 and 5/MG alike.
+                    val parsed = Framing.parseFrame(frame, connectedFamily)
                     // A frame replayed as part of the historical offload (type 47/48/… during a backfill)
                     // must not drive LIVE-only state (the charging pill). Mirrors iOS, where the offload
                     // path skips the live router entirely. (PR #568 reimpl)
-                    handleFrame(frame, replayedOffload = offloadFrame)
+                    handleFrame(frame, parsed, replayedOffload = offloadFrame)
 
                     // Capture the strap's newest stored record from a GET_DATA_RANGE reply, feeding
                     // the liveness watchdog. The response command byte is family-dependent: @6 on
@@ -3339,8 +3353,9 @@ class WhoopBleClient(
                             routeBackfillFrame(frame)
                         }
                     } else {
-                        // Live path: buffer the frame for a batched decode+insert (port of Collector.ingest).
-                        ingestLiveFrame(frame)
+                        // Live path: buffer the frame + its parse for a batched insert (port of Collector.ingest).
+                        // #47: thread the single parse so flushLive doesn't re-decode the batch.
+                        ingestLiveFrame(frame, parsed)
                     }
                   } catch (t: Throwable) {
                     log("inbound frame handling threw ${t.javaClass.simpleName} — dropping this frame, link stays up")
@@ -3408,8 +3423,15 @@ class WhoopBleClient(
      * Pure decode→state router for one COMPLETE frame.
      * Direct port of `FrameRouter.handle(frame:)`.
      */
-    private fun handleFrame(frame: ByteArray, replayedOffload: Boolean = false) {
-        val parsed = Framing.parseFrame(frame, connectedFamily)
+    /** Parse-then-route shim (#47). Kept for any caller/test that passes raw bytes; the live dispatcher
+     *  parses ONCE and calls the overload below with the result. */
+    private fun handleFrame(frame: ByteArray, replayedOffload: Boolean = false) =
+        handleFrame(frame, Framing.parseFrame(frame, connectedFamily), replayedOffload)
+
+    /** #47: the dispatcher decodes each frame ONCE and threads it here, so a live frame is parsed once
+     *  instead of twice (this router path + the live-collector flush). `frame` is still passed for the
+     *  byte-level sub-decoders. */
+    private fun handleFrame(frame: ByteArray, parsed: com.noop.protocol.ParsedFrame, replayedOffload: Boolean = false) {
         if (!parsed.ok) return
         // Reject frames that failed their checksum — never let bad bytes drive state.
         if (parsed.crcOk == false) return
@@ -4273,9 +4295,14 @@ class WhoopBleClient(
      * serves GET_CLOCK on this firmware) and REALTIME_DATA's `timestamp` is mapped through it; the
      * historical store, which is the real metric source, carries its own unix ts and needs no clock.
      */
-    private fun ingestLiveFrame(frame: ByteArray) {
+    /** Parse-then-buffer shim (#47). Kept for callers that pass raw bytes; the live dispatcher passes the
+     *  parse it already did. */
+    private fun ingestLiveFrame(frame: ByteArray) =
+        ingestLiveFrame(frame, Framing.parseFrame(frame, connectedFamily))
+
+    private fun ingestLiveFrame(frame: ByteArray, parsed: com.noop.protocol.ParsedFrame) {
         val shouldFlush = synchronized(collectorLock) {
-            liveBuffer.add(frame)   // synchronous append preserves GATT-callback arrival order
+            liveBuffer.add(frame to parsed)   // synchronous append preserves GATT-callback arrival order
             liveBuffer.size >= FLUSH_MAX_FRAMES ||
                 (System.currentTimeMillis() - batchStartedAtMs) >= FLUSH_MAX_INTERVAL_MS
         }
@@ -4303,7 +4330,7 @@ class WhoopBleClient(
         // on today's timeline whatever the strap's clock says, and is a no-op when the clock is already
         // valid (newest frame ≈ now). The dense, authoritative source is still the type-47 history store.
         val now = (System.currentTimeMillis() / 1000L).toInt()
-        val parsed = frames.map { Framing.parseFrame(it, connectedFamily) }
+        val parsed = frames.map { it.second }   // #47: the dispatcher already decoded these — don't re-parse
         val newestRealtimeTs = parsed.asSequence()
             .filter { it.ok && it.crcOk != false && it.typeName == "REALTIME_DATA" }
             .mapNotNull { (it.parsed["timestamp"] as? Number)?.toInt() }
@@ -4565,6 +4592,16 @@ class WhoopBleClient(
         // PR #556 reimpl: persist the HISTORY_COMPLETE instant so "Last synced N ago" survives a BLE-client
         // recreation / process restart and stops reverting to "Never".
         if (reason == "HISTORY_COMPLETE") NoopPrefs.setLastSyncAt(context, nowSec)
+        // #57 debug: write-health signal for the export. "Last sync" fires even on an empty/failed offload,
+        // so it can't distinguish "0 rows because the strap was empty" from "0 rows because writes FAILED".
+        // Record the last time rows actually landed, and the last time an offload STALLED on a persist
+        // failure (the closed-DB-after-restore class) — so a future "sync stuck at 0" report is decidable.
+        runCatching {
+            val p = NoopPrefs.of(context).edit()
+            if (backfiller.sessionRowsPersisted > 0) p.putLong("sync.lastWriteOkAt", nowSec)
+            if (backfiller.persistStalled) p.putLong("sync.lastWriteStalledAt", nowSec)
+            p.apply()
+        }
         // #580: a WHOOP 5/MG whose firmware serves no history offload (acks SEND_HISTORICAL_DATA but emits
         // zero type-0x2F frames) times out every session — but that's NOT a failure: live HR streams fine,
         // the offload is just experimental on that firmware. "Banked" = this offload made ANY offload
